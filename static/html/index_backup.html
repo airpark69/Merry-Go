@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Merry-Go</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow-y: scroll;
+        }
+        #videoContainer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 80%;
+            padding: 20px;
+        }
+        #video {
+            width: 100%;
+            max-width: 1280px;
+            height: auto;
+            max-height: 720px;
+        }
+        .shared-style {
+            width: 100%;
+            max-width: 1280px;
+            margin: 10px 0;
+            font-size: 20px;
+        }
+        #uploadButton {
+            height: 50px;
+        }
+        #pixelBoard {
+            display: none;
+            flex-wrap: wrap;
+            height: 500px;
+            width: 100%;
+            background-color: #ffffff;
+        }
+        .pixel {
+            width: 10px;
+            height: 10px;
+            border: 1px solid #ddd;
+        }
+        #chat {
+            width: 20%;
+            height: 100vh;
+            box-sizing: border-box;
+            padding: 10px;
+            overflow-y: auto;
+            background-color: #f1f1f1;
+            border-left: 1px solid #ccc;
+            display: flex;
+            flex-direction: column;
+        }
+        #messageList {
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        #inputArea {
+            display: flex;
+            flex-direction: row;
+        }
+        #usernameInput {
+            width: 30%;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+        #messageInput {
+            width: 50%;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+        #sendBtn {
+            width: 20%;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+        .message {
+            background-color: white;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        .main-container {
+            display: flex;
+            width: 100%;
+        }
+        .content {
+            display: flex;
+            flex-direction: column;
+            width: 80%;
+        }
+    </style>
+    <script>
+        var serverIP = "localhost";  // 여기에 실제 서버 IP 주소를 입력하세요
+        var PORT = "18080"
+        var HOST = serverIP + ':' + PORT
+        var hlsUrl = 'http://' + HOST + '/hls/playlist.m3u8';
+        var wsUrl = 'ws://' + HOST + '/ws';
+        var wspUrl = 'ws://' + HOST + '/wsp';
+        var uploadVideoUrl = 'http://' + HOST + '/uploadVideo';
+        var checkModeUrl = 'http://' + HOST + '/checkMode'
+        var currentTime = 0;
+
+        document.addEventListener("DOMContentLoaded", async function() {
+            await fetch(checkModeUrl)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.mode) {
+                        document.getElementById('uploadButton').style.display = 'none';
+                        document.getElementById('pixelBoard').style.display = 'flex';
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+
+            var video = document.getElementById('video');
+
+            function setupHLS() {
+                if (Hls.isSupported()) {
+                    hls = new Hls();
+                    hls.loadSource(hlsUrl);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                        console.log("HLS manifest parsed, starting playback from ", currentTime);
+                        video.currentTime = currentTime;
+                        video.play();
+                    });
+                    hls.on(Hls.Events.ERROR, function (event, data) {
+                        console.error("HLS error: ", data);
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = hlsUrl;
+                    video.addEventListener('loadedmetadata', function () {
+                        console.log("Metadata loaded, starting playback from ", currentTime);
+                        video.currentTime = currentTime;
+                        video.play();
+                    });
+                } else {
+                    console.error("HLS is not supported in this browser");
+                }
+            }
+
+            setupHLS();
+
+            function reloadHLS() {
+                console.log("Reloading HLS playlist")
+                currentTime = video.currentTime;
+                if (hls) {
+                    hls.loadSource(hlsUrl);
+                    video.currentTime = currentTime;
+                } else {
+                    setupHLS();
+                }
+            }
+
+            var socket = new WebSocket(wsUrl);
+
+            socket.onmessage = function(event) {
+                var msg = JSON.parse(event.data);
+                var messageList = document.getElementById('messageList');
+                var messageElem = document.createElement('div');
+                messageElem.className = 'message';
+                messageElem.textContent = msg.username + ": " + msg.message;
+                messageList.appendChild(messageElem);
+                messageList.scrollTop = messageList.scrollHeight;
+            };
+
+            function sendMessage() {
+                var usernameInput = document.getElementById('usernameInput');
+                var messageInput = document.getElementById('messageInput');
+                var username = usernameInput.value.trim();
+                var message = messageInput.value.trim();
+                if (username !== "" && message !== "") {
+                    socket.send(JSON.stringify({
+                        username: username,
+                        message: message
+                    }));
+                    messageInput.value = "";
+                }
+            }
+
+            const wsp = new WebSocket(wspUrl);
+
+            wsp.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                const pixel = document.getElementById(data.id);
+                if (pixel) {
+                    pixel.style.backgroundColor = data.color;
+                }
+            };
+
+            document.getElementById('sendBtn').addEventListener('click', sendMessage);
+
+            document.getElementById('messageInput').addEventListener('keydown', function(event) {
+                if (event.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+
+            document.getElementById('uploadButton').addEventListener('change', async function (event) {
+                var file = event.target.files[0];
+                if (file) {
+                    var formData = new FormData();
+                    formData.append('video', file);
+
+                    fetch(uploadVideoUrl, {
+                        method: 'POST',
+                        body: formData
+                    })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('Success:', data);
+                        })
+                        .catch((error) => {
+                            console.error('Error:', error);
+                        });
+                }
+            });
+
+            function createPixelBoard() {
+                const board = document.getElementById("pixelBoard");
+                if (board) {
+                    for (let i = 0; i < 100; i++) {
+                        for (let j = 0; j < 100; j++) {
+                            const pixel = document.createElement("div");
+                            pixel.className = "pixel";
+                            pixel.id = `pixel-${i}-${j}`;
+                            pixel.addEventListener("click", () => {
+                                const color = prompt("Enter color:");
+                                pixel.style.backgroundColor = color;
+                                wsp.send(JSON.stringify({ id: pixel.id, color: color }));
+                            });
+                            board.appendChild(pixel);
+                        }
+                    }
+                }
+            }
+
+            createPixelBoard();
+        });
+    </script>
+</head>
+<body>
+<div class="main-container">
+    <div class="content">
+        <div id="videoContainer">
+            <video id="video" controls autoplay></video>
+            <input type="file" id="uploadButton" class="shared-style" accept="video/*">
+            <div id="pixelBoard" class="shared-style"></div>
+        </div>
+    </div>
+    <div id="chat">
+        <h2>Chat</h2>
+        <div id="messageList"></div>
+        <div id="inputArea">
+            <input type="text" id="usernameInput" placeholder="Username">
+            <input type="text" id="messageInput" placeholder="Enter your message...">
+            <button id="sendBtn">Send</button>
+        </div>
+    </div>
+</div>
+</body>
+</html>
