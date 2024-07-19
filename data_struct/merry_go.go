@@ -9,90 +9,148 @@ type Rider interface {
 	Info() string
 }
 
-type horse struct {
+type Horse struct {
 	rider Rider
-	right *horse
-	left  *horse
+	right *Horse
+	left  *Horse
 }
 
 type MerryGo struct {
-	horses     []horse
-	aroundSize int
-	riderCount int
+	Head  *Horse
+	Tail  *Horse
+	Size  int
+	Count int
 }
 
 func NewMerryGo(size int) *MerryGo {
-	rawHorses := make([]horse, size)
-	for i, h := range rawHorses {
-		if i == 0 {
-			h.left = &rawHorses[len(rawHorses)-1]
-			h.right = &rawHorses[i+1]
-		} else if i == len(rawHorses)-1 {
-			h.left = &rawHorses[i-1]
-			h.right = &rawHorses[0]
-		} else {
-			h.left = &rawHorses[i-1]
-			h.right = &rawHorses[i+1]
-		}
-	}
-	return &MerryGo{horses: rawHorses, aroundSize: size, riderCount: 0}
+	return &MerryGo{Size: size, Count: 0}
 }
 
-func (m *MerryGo) appendRider(rider Rider) error {
+/*
+append 해당 함수는 MerryGo에 Horse와 Rider를 추가합니다. 더 이상 MerryGo에 자리가 없을 경우 에러가 납니다
+
+rider Rider: MerryGo에 들어갈 데이터
+*/
+func (m *MerryGo) append(rider Rider) error {
 	if m.IsFull() {
 		return errors.New("MerryGo is full")
 	}
-	m.horses[m.riderCount].rider = rider
-	m.riderCount++
+
+	newHorse := &Horse{rider: rider}
+	if m.Head == nil && m.Tail == nil {
+		m.Head = newHorse
+		m.Tail = newHorse
+		m.Head.left = newHorse
+		m.Head.right = newHorse
+		m.Tail.left = newHorse
+		m.Tail.right = newHorse
+		return nil
+	}
+
+	newHorse.right = m.Head
+	newHorse.left = m.Tail
+	if m.Head == m.Tail {
+		m.Head.right = newHorse
+	}
+	m.Tail = newHorse
+	m.Head.left = m.Tail
+
+	m.Count++
+
 	return nil
 }
 
-func (m *MerryGo) popRider(index ...int) (Rider, error) {
-	var defaultIndex = 0
-	var popRider Rider
-	if len(index) > 0 {
-		defaultIndex = index[0]
-	}
+/*
+popTail 해당 함수는 MerryGo의 Tail에 해당하는 Horse를 빼냅니다.
+*/
+func (m *MerryGo) popTail() (horse *Horse, err error) {
+	var popHorse *Horse
 
 	if m.IsEmpty() {
-		return popRider, errors.New("MerryGo is empty")
+		return popHorse, errors.New("MerryGo is empty")
 	}
 
-	popRider = m.horses[defaultIndex].rider
-
-	for {
-		if defaultIndex == m.aroundSize {
-			break
-		}
-		m.horses[defaultIndex].rider = m.horses[defaultIndex].next.rider
-		m.horses[defaultIndex].next.rider = nil
-		defaultIndex++
+	popHorse = m.Tail
+	if m.Count == 1 {
+		m.Head = nil
+		m.Tail = nil
+		return popHorse, nil
 	}
 
-	m.riderCount--
-	return popRider, nil
+	m.Tail.left.right = m.Head
+	m.Tail = m.Tail.left
+	m.Head.left = m.Tail
+
+	m.Count--
+
+	return popHorse, nil
+}
+
+/*
+popHead 해당 함수는 MerryGo의 Head에 해당하는 Horse를 빼냅니다.
+*/
+func (m *MerryGo) popHead() (horse *Horse, err error) {
+	var popHorse *Horse
+
+	if m.IsEmpty() {
+		return popHorse, errors.New("MerryGo is empty")
+	}
+
+	popHorse = m.Head
+	if m.Count == 1 {
+		m.Head = nil
+		m.Tail = nil
+		return popHorse, nil
+	}
+
+	m.Head.right.left = m.Tail
+	m.Head = m.Head.right
+	m.Tail.right = m.Head
+
+	m.Count--
+
+	return popHorse, nil
 }
 
 func (m *MerryGo) IsFull() bool {
-	return m.aroundSize == m.riderCount
+	return m.Count == m.Size
 }
 
 func (m *MerryGo) IsEmpty() bool {
-	return m.riderCount == 0
+	return m.Count == 0
 }
 
+/*
+rotate MerryGo 내의 모든 Rider의 위치를 left로 이동시킵니다.
+*/
 func (m *MerryGo) rotate() error {
 	if m.IsEmpty() {
 		return errors.New("MerryGo is empty")
 	}
 
-	var tmpRider Rider
-	for i, h := range m.horses {
-		tmpRider = h.rider
-		h.next.rider = h.rider
+	m.Head = m.Head.right
+	return nil
+}
+
+/*
+display MerryGo 내의 모든 데이터를 Head -> Tail 순으로 순환하여 리턴합니다.
+*/
+func (m *MerryGo) display() ([]*Horse, error) {
+	if m.IsEmpty() {
+		return nil, errors.New("MerryGo is empty")
 	}
 
-	return nil
+	var HorseList []*Horse
+	start := m.Head
+	for {
+		HorseList = append(HorseList, start)
+		if start.right == m.Head {
+			break
+		}
+		start = start.right
+	}
+
+	return HorseList, nil
 }
 
 type Segment struct {
