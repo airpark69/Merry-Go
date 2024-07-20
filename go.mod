@@ -1,4 +1,4 @@
-module SnackCam
+module Merry-Go
 
 go 1.22
 

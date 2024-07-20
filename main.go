@@ -1,8 +1,8 @@
 package main
 
 import (
-	"SnackCam/database"
-	"SnackCam/handlers"
+	"Merry-Go/database"
+	"Merry-Go/handlers"
 	"fmt"
 	"log"
 	"os"

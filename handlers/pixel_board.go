@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"SnackCam/database"
-	"SnackCam/models"
+	"Merry-Go/database"
+	"Merry-Go/models"
 	"log"
 
 	"github.com/gofiber/websocket/v2"

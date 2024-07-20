@@ -1,7 +1,7 @@
 package database
 
 import (
-	"SnackCam/models"
+	"Merry-Go/models"
 	"log"
 	"os"
 
