@@ -11,4 +11,4 @@ services:
       - "18080:18080"
       - "15000:15000/udp"
     environment:
-      - MODE=true
+      - MODE=false

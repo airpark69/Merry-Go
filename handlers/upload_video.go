@@ -1,46 +1,55 @@
 package handlers
 
 import (
+	"Merry-Go/data_struct"
 	"errors"
 	"fmt"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 var muxUploadVideo sync.Mutex
 
 const (
-	hlsDir  = "static/hls"
-	tmpDir  = "upload_video_tmp"
-	SEGNAME = "seg"
-	SPLITER = "_"
+	hlsDir   = "static/hls"
+	tmpDir   = "upload_video_tmp"
+	SEGNAME  = "seg"
+	SPLITER  = "_"
+	PLAYLIST = "playlist"
 )
 
 var absHlsDir, _ = filepath.Abs(hlsDir)
 var tmpHlsDir, _ = filepath.Abs(tmpDir)
-var segCount = 0
 var tempLines = []string{
 	"#EXTM3U",
 	"#EXT-X-VERSION:3",
 	"#EXT-X-TARGETDURATION:13",
 	"#EXT-X-MEDIA-SEQUENCE:0",
 }
+var mainPlaylistFile = filepath.Join(absHlsDir, PLAYLIST+".m3u8")
+var merryGo = data_struct.NewMerryGo(10)
 
-// UploadHandler handles file uploads and converts them to HLS format
+/* UploadHandler handles file uploads and converts them to HLS format
+ */
 func UploadHandler(c *fiber.Ctx) error {
 	file, err := c.FormFile("video")
 	if err != nil {
 		log.Println("Failed to retrieve file from form-data: ", err)
 		return c.Status(fiber.StatusBadRequest).SendString("Failed to retrieve file from form-data")
+	}
+
+	if merryGo.IsFull() {
+		return c.Status(fiber.StatusBadRequest).SendString("Merry-Go is Full")
 	}
 
 	// Save the uploaded file to the server
@@ -100,7 +109,7 @@ func UploadHandler(c *fiber.Ctx) error {
 	}(tmpHlsDir, fileKey)
 
 	// Append new segments to the main playlist
-	mainPlaylistFile := filepath.Join(absHlsDir, "playlist.m3u8")
+	//mainPlaylistFile := filepath.Join(absHlsDir, "playlist.m3u8")
 	err = appendToPlaylist(mainPlaylistFile, tempPlaylistFilePath, tempSegmentName)
 	if err != nil {
 		log.Println("Failed to update HLS playlist: ", err)
@@ -138,6 +147,10 @@ func convertToHLS(inputFilePath, outputFilePath string) error {
 
 // appendToPlaylist appends segments from the new file to the existing playlist
 func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName string) error {
+	segCount, err := countSegment()
+	if err != nil {
+		return err
+	}
 	if segCount == 0 {
 		mainPlaylist, err := os.ReadFile(mainPlaylistFile)
 		if err != nil {
@@ -162,7 +175,13 @@ func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName
 	}
 
 	// temp segment를 복사
-	filteredLines, err := copySegments(tempPlaylistFile, tempSegmentName, absHlsDir)
+	filteredLines, segmentData, err := copySegments(tempPlaylistFile, tempSegmentName, absHlsDir)
+	if err != nil {
+		return err
+	}
+
+	// MerryGo에 Segment 데이터 삽입
+	err = merryGo.Append(segmentData)
 	if err != nil {
 		return err
 	}
@@ -215,6 +234,48 @@ func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName
 	return nil
 }
 
+/*
+countSegment 현재 segment 번호를 카운트해서 마지막 segment 파일의 숫자보다 1만큼 큰 숫자를 반환
+
+예시: seg1.ts seg2.ts 가 있으면 3을 반환
+*/
+func countSegment() (int, error) {
+	// 폴더 내 파일 목록 읽기
+	files, err := os.ReadDir(absHlsDir)
+	if err != nil {
+		log.Fatal(err)
+		return 0, nil
+	}
+
+	// 정규 표현식 컴파일
+	re := regexp.MustCompile(SEGNAME + `(\d+)\.ts`)
+
+	maxNumber := 0
+
+	// 파일 목록 순회
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		// 파일 이름에서 숫자 추출
+		matches := re.FindStringSubmatch(file.Name())
+		if len(matches) > 1 {
+			number, err := strconv.Atoi(matches[1])
+			if err != nil {
+				return maxNumber, err
+			}
+			if number > maxNumber {
+				maxNumber = number
+			}
+		}
+	}
+
+	// 마지막 숫자보다 1 큰 값
+	nextNumber := maxNumber + 1
+	return nextNumber, nil
+}
+
 // deleteTempSegments 함수는 주어진 디렉토리 내에서 pattern 에 해당하는 문자열으로 시작하는 파일을 모두 삭제합니다.
 func deleteTempSegments(directory string, pattern string) error {
 	err := filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
@@ -242,6 +303,17 @@ func updateDurationTag(combinedLines []string) {
 	for i, line := range combinedLines {
 		if strings.HasPrefix(line, "#EXT-X-TARGETDURATION:") {
 			combinedLines[i] = newTargetDuration
+			break
+		}
+	}
+}
+
+// updateSequenceTag 인자로 받은 플레이 리스트 문자열 배열 내의 #EXT-X-MEDIA-SEQUENCE 태그를 업데이트 합니다.
+func updateSequenceTag(combinedLines []string, start int) {
+	newSequence := fmt.Sprintf("#EXT-X-MEDIA-SEQUENCE:%d", start)
+	for i, line := range combinedLines {
+		if strings.HasPrefix(line, "#EXT-X-MEDIA-SEQUENCE:") {
+			combinedLines[i] = newSequence
 			break
 		}
 	}
@@ -303,26 +375,42 @@ func copyFile(src, dst string) error {
 
 // copySegments 함수는 .m3u8 파일과 같은 폴더에 있는 세그먼트 파일을 특정 폴더로 복사합니다.
 // 복사할 때 segment들은 seg%d.ts 의 형태로 segCount에 따라서 다르게 복사됩니다.
-func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]string, error) {
+func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]string, data_struct.Segment, error) {
 	// 업로드 플레이 리스트 읽기
 	var segmentLines []string
+	var segmentData data_struct.Segment
+	segCount, err := countSegment()
+	if err != nil {
+		return segmentLines, segmentData, err
+	}
+
+	//segmentData.Name = tempSegmentName
+
 	tempPlaylist, err := os.ReadFile(tempPlaylistPath)
 	if err != nil {
-		return segmentLines, err
+		return segmentLines, segmentData, err
 	}
 
 	// 업로드 플레이 리스트 -> 문자열 배열으로 변환
 	segmentLines = strings.Split(string(tempPlaylist), "\n")
 	filteredLines := []string{}
 	tmpCount := segCount
+	segLength := 0.0
 	for _, line := range segmentLines {
 		// #EXTINF
 		if strings.HasPrefix(line, "#EXTINF:") {
 			filteredLines = append(filteredLines, line)
+			parts := strings.Split(line, ":")
+			number, err := strconv.ParseFloat(parts[1][:len(parts[1])-1], 64)
+			if err != nil {
+				fmt.Println("Error:", err)
+				return segmentLines, segmentData, err
+			}
+			segLength += number
 		} else if strings.HasPrefix(line, tempSegmentName) {
 			parts := strings.Split(line, SPLITER)
 			if len(parts) < 2 {
-				return segmentLines, errors.New("invalid segment name")
+				return segmentLines, segmentData, errors.New("invalid segment name")
 			}
 			newSegLine := fmt.Sprintf(SEGNAME+"%d.ts", tmpCount)
 			// 세그먼트 부분만 사용
@@ -330,6 +418,7 @@ func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]s
 			tmpCount++
 		}
 	}
+	segmentData.Length = int(math.Ceil(segLength))
 
 	// .m3u8 파일의 디렉토리 추출
 	sourceDir := filepath.Dir(tempPlaylistPath)
@@ -341,17 +430,18 @@ func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]s
 	if _, err := os.Stat(destDir); os.IsNotExist(err) {
 		err = os.MkdirAll(destDir, os.ModePerm)
 		if err != nil {
-			return filteredLines, fmt.Errorf("failed to create destination directory: %w", err)
+			return filteredLines, segmentData, fmt.Errorf("failed to create destination directory: %w", err)
 		}
 	}
 
 	// 소스 디렉토리 내의 모든 파일 읽기
 	files, err := os.ReadDir(sourceDir)
 	if err != nil {
-		return filteredLines, fmt.Errorf("failed to read source directory: %w", err)
+		return filteredLines, segmentData, fmt.Errorf("failed to read source directory: %w", err)
 	}
 
 	// 세그먼트 파일 복사
+	segmentData.Start = segCount
 	for _, file := range files {
 		if strings.HasPrefix(file.Name(), baseName) && strings.HasSuffix(file.Name(), ".ts") {
 			newFileName := fmt.Sprintf(SEGNAME+"%d.ts", segCount)
@@ -360,11 +450,12 @@ func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]s
 			destFilePath := filepath.Join(destDir, newFileName)
 			err := copyFile(sourceFilePath, destFilePath)
 			if err != nil {
-				return filteredLines, fmt.Errorf("failed to copy file %s to %s: %w", sourceFilePath, destFilePath, err)
+				return filteredLines, segmentData, fmt.Errorf("failed to copy file %s to %s: %w", sourceFilePath, destFilePath, err)
 			}
 			log.Printf("Copied %s to %s\n", sourceFilePath, destFilePath)
 		}
 	}
+	segmentData.End = segCount - 1
 
-	return filteredLines, nil
+	return filteredLines, segmentData, nil
 }

@@ -4,20 +4,55 @@ import (
 	"Merry-Go/database"
 	"Merry-Go/handlers"
 	"fmt"
+	"github.com/gofiber/websocket/v2"
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/gofiber/websocket/v2"
 )
 
 var mode = false // true -> 카메라 업로드를 통한 실시간 라이브 , false -> 파일 업로드를 통한 시청 방식
 var err error
 
 func main() {
+	//tmpLines := []string{"#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:11", "#EXT-X-MEDIA-SEQUENCE:0", "#EXTINF:10.666667,", "seg5.ts", "#EXTINF:10.666667,", "seg6.ts #EXTINF:7.366667,", "seg7.ts", "#EXTINF:6.933333,", "seg4.ts"}
+	//subSlice := tmpLines[4 : 9+1]
+	//
+	//log.Println(subSlice)
+	//
+	//return
+	// 초기 주기 설정 (10초)
+	initialInterval := 10 * time.Second
+	changeIntervalChan := make(chan handlers.ChangeInterval)
+	quit := make(chan struct{})
+
+	// 고루틴에서 주기적으로 함수 실행
+	go func() {
+		ticker := time.NewTicker(initialInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				err = handlers.RotateVideo(changeIntervalChan)
+				if err != nil {
+					log.Println(err)
+				}
+			case newInterval := <-changeIntervalChan:
+				log.Println(newInterval.Interval.String() + " 로 주기 변경")
+				ticker.Stop()
+				ticker = time.NewTicker(newInterval.Interval)
+			case <-quit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
 	// Initialize database
 	database.InitDatabase()
 
@@ -59,6 +94,7 @@ func main() {
 		// 비디오 업로드 -> HLS 변환
 		app.Post("/uploadVideo", handlers.UploadHandler)
 
+		// TODO - RotateVideo를 주기적으로 실행 시키도록 만들고 head의 총 재생시간 만큼 주기를 잡고 반복적으로 실행시킨다
 	}
 
 	///////////////////////////////////////////////////////

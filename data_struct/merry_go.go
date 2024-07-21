@@ -2,11 +2,10 @@ package data_struct
 
 import (
 	"errors"
-	"fmt"
 )
 
 type Rider interface {
-	Info() string
+	Info() (int, int, int)
 }
 
 type Horse struct {
@@ -143,11 +142,11 @@ func (m *MerryGo) Display() ([]Rider, error) {
 }
 
 type Segment struct {
-	Start int
-	End   int
-	Name  string
+	Start  int
+	End    int
+	Length int
 }
 
-func (s Segment) Info() string {
-	return fmt.Sprintf("start: %d, end: %d, name: %s", s.Start, s.End, s.Name)
+func (s Segment) Info() (int, int, int) {
+	return s.Start, s.End, s.Length
 }
