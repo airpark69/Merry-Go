@@ -11,7 +11,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"time"
 )
 
 var mode = false // true -> 카메라 업로드를 통한 실시간 라이브 , false -> 파일 업로드를 통한 시청 방식
@@ -60,35 +59,8 @@ func main() {
 		// 비디오 업로드 -> HLS 변환
 		app.Post("/uploadVideo", handlers.UploadHandler)
 
-		// Rotate 주기 설정
-
-		// 초기 주기 설정 (10초)
-		initialInterval := 10 * time.Second
-		changeIntervalChan := make(chan handlers.ChangeInterval)
-		quit := make(chan struct{})
-
-		// 고루틴에서 주기적으로 함수 실행
-		go func() {
-			ticker := time.NewTicker(initialInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ticker.C:
-					err = handlers.RotateVideo(changeIntervalChan)
-					if err != nil {
-						log.Println(err)
-					}
-				case newInterval := <-changeIntervalChan:
-					log.Println(newInterval.Interval.String() + " 로 주기 변경")
-					ticker.Stop()
-					ticker = time.NewTicker(newInterval.Interval)
-				case <-quit:
-					ticker.Stop()
-					return
-				}
-			}
-		}()
+		// 고루틴에서 주기적으로 인터벌 함수 실행
+		go handlers.RotateInteval()
 	}
 
 	///////////////////////////////////////////////////////

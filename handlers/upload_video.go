@@ -34,7 +34,8 @@ var tempLines = []string{
 	"#EXTM3U",
 	"#EXT-X-VERSION:3",
 	"#EXT-X-TARGETDURATION:13",
-	"#EXT-X-MEDIA-SEQUENCE:0",
+	"#EXT-X-ALLOW-CACHE:NO", // 캐시 여부
+	//"#EXT-X-MEDIA-SEQUENCE:0",
 }
 var mainPlaylistFile = filepath.Join(absHlsDir, PLAYLIST+".m3u8")
 var merryGo = data_struct.NewMerryGo(10)
@@ -75,13 +76,6 @@ func UploadHandler(c *fiber.Ctx) error {
 
 	muxUploadVideo.Lock()
 	defer muxUploadVideo.Unlock()
-
-	// Convert the uploaded file to HLS format
-	//absHlsDir, err := filepath.Abs(hlsDir)
-	//if err != nil {
-	//	log.Println("Failed to get absolute path of HLS directory: ", err)
-	//	return c.Status(fiber.StatusInternalServerError).SendString("Failed to get absolute path of HLS directory")
-	//}
 
 	// tmpHlsDir 디렉토리가 존재하는지 확인하고, 없으면 생성
 	if _, err := os.Stat(tmpHlsDir); os.IsNotExist(err) {
@@ -147,7 +141,7 @@ func convertToHLS(inputFilePath, outputFilePath string) error {
 
 // appendToPlaylist appends segments from the new file to the existing playlist
 func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName string) error {
-	segCount, err := countSegment()
+	segCount, err := getLastSegmentNum()
 	if err != nil {
 		return err
 	}
@@ -193,7 +187,6 @@ func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName
 			// mainPlaylist가 존재하지 않을 경우 새로 생성
 			log.Printf("mainPlaylist does not exist -- creating: %s\n", mainPlaylistFile)
 			combinedLines := append(tempLines, filteredLines...)
-			combinedLines = append(combinedLines, "#EXT-X-ENDLIST")
 			updateDurationTag(combinedLines)
 			err = os.WriteFile(mainPlaylistFile, []byte(strings.Join(combinedLines, "\n")), 0644)
 			if err != nil {
@@ -208,7 +201,7 @@ func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName
 
 	// 기존 플레이 리스트 -> mainLines 문자열 배열으로 변환
 	rawMainLines := strings.Split(string(mainPlaylist), "\n")
-	// Remove the #EXT-X-ENDLIST tag
+	// Remove the #EXT-X-ENDLIST tag - for Live Streaming
 	// #EXT-X-ENDLIST tag 는 플레이 리스트가 끝나는 지점을 의미
 	var mainLines []string
 	for _, line := range rawMainLines {
@@ -218,12 +211,11 @@ func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName
 		}
 	}
 
+	// #EXT-X-DISCONTINUITY 태그 - 세그먼트 간 구분자 삽입
+	combinedLines := append(mainLines, "#EXT-X-DISCONTINUITY")
 	// Combine the main playlist and new segment lines
-	combinedLines := append(mainLines, filteredLines...)
+	combinedLines = append(combinedLines, filteredLines...)
 	updateDurationTag(combinedLines)
-
-	// Add the #EXT-X-ENDLIST tag back to the combined lines
-	combinedLines = append(combinedLines, "#EXT-X-ENDLIST")
 
 	// Write the combined lines back to the main playlist
 	err = os.WriteFile(mainPlaylistFile, []byte(strings.Join(combinedLines, "\n")), 0644)
@@ -235,11 +227,11 @@ func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName
 }
 
 /*
-countSegment 현재 segment 번호를 카운트해서 마지막 segment 파일의 숫자보다 1만큼 큰 숫자를 반환
+getLastSegmentNum 현재 segment 번호를 카운트해서 마지막 segment 파일의 숫자보다 1만큼 큰 숫자를 반환
 
 예시: seg1.ts seg2.ts 가 있으면 3을 반환
 */
-func countSegment() (int, error) {
+func getLastSegmentNum() (int, error) {
 	// 폴더 내 파일 목록 읽기
 	files, err := os.ReadDir(absHlsDir)
 	if err != nil {
@@ -306,6 +298,11 @@ func updateDurationTag(combinedLines []string) {
 			break
 		}
 	}
+}
+
+// updateEndListTag 인자로 받은 플레이 리스트 문자열 배열 내에 #EXT-X-ENDLIST 태그를 업데이트 합니다.
+func updateEndListTag(combinedLines []string) []string {
+	return append(combinedLines, "#EXT-X-ENDLIST")
 }
 
 // updateSequenceTag 인자로 받은 플레이 리스트 문자열 배열 내의 #EXT-X-MEDIA-SEQUENCE 태그를 업데이트 합니다.
@@ -379,12 +376,13 @@ func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]s
 	// 업로드 플레이 리스트 읽기
 	var segmentLines []string
 	var segmentData data_struct.Segment
-	segCount, err := countSegment()
+	segCount, err := getLastSegmentNum()
 	if err != nil {
 		return segmentLines, segmentData, err
 	}
 
 	//segmentData.Name = tempSegmentName
+	// TODO -- hls 플레이리스트에서 파일 간의 분할을 위한 태그가 있음. 이에 따라서 segment 이름과 숫자를 지정하지 않고 uuid 값 그대로 사용 가능, 이게 더 로직상 간단하고 직관적이라 변경하는게 좋을듯
 
 	tempPlaylist, err := os.ReadFile(tempPlaylistPath)
 	if err != nil {
