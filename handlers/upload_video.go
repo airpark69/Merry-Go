@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"mime/multipart"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,7 @@ const (
 	SEGNAME            = "seg"
 	SPLITER            = "_"
 	PLAYLIST           = "playlist"
-	LENGTH_ADJUST      = 1.2
+	LENGTH_ADJUST      = 1.4
 	TAG_TARGETDURATION = "#EXT-X-TARGETDURATION"
 	TAG_MEDIALENGTH    = "#EXTINF"
 )
@@ -58,19 +59,36 @@ func UploadHandler(c *fiber.Ctx) error {
 
 	// Save the uploaded file to the server
 	tempFilePath := filepath.Join(os.TempDir(), file.Filename)
+	defer func(filePath string) {
+		err := deleteTempUploadedFile(filePath)
+		if err != nil {
+			log.Println("Failed to delete temp uploaded file: ", err)
+		}
+	}(tempFilePath)
+
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
 		log.Println("Failed to create temporary file: ", err)
 		return c.Status(fiber.StatusInternalServerError).SendString("Failed to create temporary file")
 	}
-	defer tempFile.Close()
+	defer func(tempFile *os.File) {
+		err := tempFile.Close()
+		if err != nil {
+			log.Println("Failed to close temporary file: ", err)
+		}
+	}(tempFile)
 
 	uploadedFile, err := file.Open()
 	if err != nil {
 		log.Println("Failed to open uploaded file: ", err)
 		return c.Status(fiber.StatusInternalServerError).SendString("Failed to open uploaded file")
 	}
-	defer uploadedFile.Close()
+	defer func(uploadedFile multipart.File) {
+		err := uploadedFile.Close()
+		if err != nil {
+			log.Println("Failed to close uploaded file: ", err)
+		}
+	}(uploadedFile)
 
 	if _, err := io.Copy(tempFile, uploadedFile); err != nil {
 		log.Println("Failed to save file: ", err)
@@ -269,6 +287,17 @@ func getLastSegmentNum() (int, error) {
 	// 마지막 숫자보다 1 큰 값
 	nextNumber := maxNumber + 1
 	return nextNumber, nil
+}
+
+// deleteTempSegments 함수는 업로드 시에 넣었던 임시 폴더 내의 업로드 파일을 삭제합니다.
+func deleteTempUploadedFile(filePath string) error {
+	log.Printf("Deleting file: %s\n", filePath)
+	err = os.Remove(filePath)
+	if err != nil {
+		log.Printf("Deleting file Error: %s\n", err)
+		return err
+	}
+	return nil
 }
 
 // deleteTempSegments 함수는 주어진 디렉토리 내에서 pattern 에 해당하는 문자열으로 시작하는 파일을 모두 삭제합니다.
