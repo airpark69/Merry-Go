@@ -35,7 +35,7 @@ var tempLines = []string{
 	"#EXT-X-VERSION:3",
 	"#EXT-X-TARGETDURATION:13",
 	"#EXT-X-ALLOW-CACHE:NO", // 캐시 여부
-	//"#EXT-X-MEDIA-SEQUENCE:0",
+	"#EXT-X-MEDIA-SEQUENCE:0",
 }
 var mainPlaylistFile = filepath.Join(absHlsDir, PLAYLIST+".m3u8")
 var merryGo = data_struct.NewMerryGo(10)
@@ -372,10 +372,10 @@ func copyFile(src, dst string) error {
 
 // copySegments 함수는 .m3u8 파일과 같은 폴더에 있는 세그먼트 파일을 특정 폴더로 복사합니다.
 // 복사할 때 segment들은 seg%d.ts 의 형태로 segCount에 따라서 다르게 복사됩니다.
-func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]string, data_struct.Segment, error) {
+func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]string, *data_struct.Segment, error) {
 	// 업로드 플레이 리스트 읽기
 	var segmentLines []string
-	var segmentData data_struct.Segment
+	var segmentData = &data_struct.Segment{Start: 0, End: 0, Length: 0}
 	segCount, err := getLastSegmentNum()
 	if err != nil {
 		return segmentLines, segmentData, err

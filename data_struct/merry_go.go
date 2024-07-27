@@ -6,6 +6,7 @@ import (
 
 type Rider interface {
 	Info() (int, int, int)
+	Update(start int, end int)
 }
 
 type Horse struct {
@@ -147,6 +148,11 @@ type Segment struct {
 	Length int
 }
 
-func (s Segment) Info() (int, int, int) {
+func (s *Segment) Info() (int, int, int) {
 	return s.Start, s.End, s.Length
+}
+
+func (s *Segment) Update(updateStart int, updateEnd int) {
+	s.Start = updateStart
+	s.End = updateEnd
 }

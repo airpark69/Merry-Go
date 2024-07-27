@@ -31,6 +31,7 @@ func RotateInteval() {
 	for {
 		select {
 		case <-ticker.C:
+			log.Println("Rotated!")
 			newLength, err = RotateVideo(changeIntervalChan)
 			if err != nil {
 				log.Println(err)
@@ -73,23 +74,31 @@ func RotateVideo(changeIntervalChan chan<- ChangeInterval) (int, error) {
 	}
 
 	headStart, headEnd, headLength := merryGo.Head.Rider.Info()
-	//lastSegNum := 0
-	mainLines, _, err = rotatePlayList(mainLines, headStart, headEnd)
+	lastSegNum := 0
+	mainLines, lastSegNum, err = rotatePlayList(mainLines, headStart, headEnd)
 	if err != nil {
 		return headLength, err
 	}
-	// TODO -- hls 파일을 웹 브라우저에서 지속적으로 순환하며 업데이트를 시키려면 결국 Segment Number가 업데이트 되어야 할듯 함.
-	//err = rotateSegment(lastSegNum, headStart, headEnd)
-	//if err != nil {
-	//	// TODO -- 에러가 날 경우를 대비해서 임시 파일에서 작업 -> 모든 작업 정상적으로 동작 -> 원본 파일 수정 -> 임시 파일 삭제 의 로직을 넣어야 제대로 된 멱등성이 보장됨
-	//	return headLength, err
-	//}
+
+	headStart, headEnd, err = rotateSegment(lastSegNum, headStart, headEnd)
+	if err != nil {
+		// TODO -- 에러가 날 경우를 대비해서 임시 파일에서 작업 -> 모든 작업 정상적으로 동작 -> 원본 파일 수정 -> 임시 파일 삭제 의 로직을 넣어야 제대로 된 멱등성이 보장됨
+		log.Println(err)
+		return headLength, err
+	}
+	log.Println("headStart : ", headStart)
+	log.Println("headEnd : ", headEnd)
+	merryGo.Head.Rider.Update(headStart, headEnd)
+	headStart, headEnd, headLength = merryGo.Head.Rider.Info()
+	log.Println("r.headstart : ", headStart)
+	log.Println("r.headEnd : ", headEnd)
+
 	_ = merryGo.Rotate()
 
 	headStart, headEnd, headLength = merryGo.Head.Rider.Info()
 
 	// Update Sequence (첫번째로 읽어올 Segment 파일 번호)
-	//updateSequenceTag(mainLines, headStart)
+	updateSequenceTag(mainLines, headStart)
 	// Write the combined lines back to the main playlist
 	err = os.WriteFile(mainPlaylistFile, []byte(strings.Join(mainLines, "\n")), 0644)
 	if err != nil {
@@ -118,13 +127,12 @@ func rotatePlayList(PlayListLines []string, start int, end int) ([]string, int, 
 	startIndex := 0
 	endIndex := 0
 
-	//lastSegNum, err := getLastSegmentNum()
-	//if err != nil {
-	//	return nil, beforeSegNum, err
-	//}
-
-	lastSegNum := start
-	beforeSegNum := start
+	lastSegNum, err := getLastSegmentNum()
+	if err != nil {
+		return nil, 0, err
+	}
+	//lastSegNum := start
+	beforeSegNum := lastSegNum
 
 	if start == end {
 		for i, v := range tmpLines {
@@ -165,18 +173,19 @@ func rotatePlayList(PlayListLines []string, start int, end int) ([]string, int, 
 	return PlayListLines, beforeSegNum, nil
 }
 
-func rotateSegment(lastSegNum int, start int, end int) error {
+func rotateSegment(lastSegNum int, start int, end int) (int, int, error) {
 	// 소스 디렉토리 내의 모든 파일 읽기
 	files, err := os.ReadDir(absHlsDir)
 	if err != nil {
-		return fmt.Errorf("failed to read source directory: %w", err)
+		return 0, 0, fmt.Errorf("failed to read source directory: %w", err)
 	}
 
 	beforeSegs := make([]string, end-start+1)
 	for i := start; i <= end; i++ {
 		beforeSegs = append(beforeSegs, fmt.Sprintf(SEGNAME+"%d.ts", i))
 	}
-
+	log.Println(beforeSegs)
+	headStart := lastSegNum
 	// 세그먼트 파일 복사 -> 복사 없이 가능
 	for _, file := range files {
 		if strings2.Include(beforeSegs, file.Name()) {
@@ -187,10 +196,11 @@ func rotateSegment(lastSegNum int, start int, end int) error {
 			err := os.Rename(sourceFilePath, destFilePath)
 			if err != nil {
 				// TODO -- 변경 중에 에러가 날 경우 트랙잭션 개념으로 전체가 취소가 되는 예외처리가 이뤄져야 함
-				return fmt.Errorf("failed to rename file %s to %s: %w", sourceFilePath, destFilePath, err)
+				return 0, 0, fmt.Errorf("failed to rename file %s to %s: %w", sourceFilePath, destFilePath, err)
 			}
 			log.Printf("[Rotate] renamed %s to %s\n", sourceFilePath, destFilePath)
 		}
 	}
-	return nil
+	headEnd := lastSegNum - 1
+	return headStart, headEnd, nil
 }
