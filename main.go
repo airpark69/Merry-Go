@@ -34,7 +34,6 @@ func main() {
 		return
 	}
 
-	// 문자열을 Boolean으로 변환
 	mode, err = strconv.ParseBool(modeStr)
 	if err != nil {
 		fmt.Printf("Error parsing MODE: %v\n", err)
@@ -56,6 +55,11 @@ func main() {
 		go handlers.HandlePixelMessages()
 		app.Get("/wsp", websocket.New(handlers.HandlePixelConnections))
 	} else {
+		// Load Playlist
+		err = handlers.LoadHls()
+		if err != nil {
+			log.Fatal(err)
+		}
 		// 비디오 업로드 -> HLS 변환
 		app.Post("/uploadVideo", handlers.UploadHandler)
 

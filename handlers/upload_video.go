@@ -21,11 +21,14 @@ import (
 var muxUploadVideo sync.Mutex
 
 const (
-	hlsDir   = "static/hls"
-	tmpDir   = "upload_video_tmp"
-	SEGNAME  = "seg"
-	SPLITER  = "_"
-	PLAYLIST = "playlist"
+	hlsDir             = "static/hls"
+	tmpDir             = "upload_video_tmp"
+	SEGNAME            = "seg"
+	SPLITER            = "_"
+	PLAYLIST           = "playlist"
+	LENGTH_ADJUST      = 1.2
+	TAG_TARGETDURATION = "#EXT-X-TARGETDURATION"
+	TAG_MEDIALENGTH    = "#EXTINF"
 )
 
 var absHlsDir, _ = filepath.Abs(hlsDir)
@@ -33,7 +36,7 @@ var tmpHlsDir, _ = filepath.Abs(tmpDir)
 var tempLines = []string{
 	"#EXTM3U",
 	"#EXT-X-VERSION:3",
-	"#EXT-X-TARGETDURATION:13",
+	TAG_TARGETDURATION + ":13",
 	"#EXT-X-ALLOW-CACHE:NO", // 캐시 여부
 	"#EXT-X-MEDIA-SEQUENCE:0",
 }
@@ -161,7 +164,7 @@ func appendToPlaylist(mainPlaylistFile, tempPlaylistFile string, tempSegmentName
 			// #EXT-X-ENDLIST tag 는 플레이 리스트가 끝나는 지점을 의미
 
 			for _, line := range rawMainLines {
-				if strings.HasPrefix(line, "#EXTINF:") {
+				if strings.HasPrefix(line, TAG_MEDIALENGTH+":") {
 					segCount++
 				}
 			}
@@ -291,9 +294,9 @@ func deleteTempSegments(directory string, pattern string) error {
 // updateDurationTag 인자로 받은 플레이 리스트 문자열 배열 내의 #EXT-X-TARGETDURATION 태그를 업데이트 합니다.
 func updateDurationTag(combinedLines []string) {
 	maxDuration := findMaxDuration(combinedLines)
-	newTargetDuration := fmt.Sprintf("#EXT-X-TARGETDURATION:%d", int(math.Ceil(maxDuration)))
+	newTargetDuration := fmt.Sprintf("%s:%d", TAG_TARGETDURATION, int(math.Ceil(maxDuration)))
 	for i, line := range combinedLines {
-		if strings.HasPrefix(line, "#EXT-X-TARGETDURATION:") {
+		if strings.HasPrefix(line, TAG_TARGETDURATION+":") {
 			combinedLines[i] = newTargetDuration
 			break
 		}
@@ -321,9 +324,9 @@ func findMaxDuration(combinedLines []string) float64 {
 	// Find the maximum segment duration
 	maxDuration := 0.0
 	for _, line := range combinedLines {
-		if strings.HasPrefix(line, "#EXTINF:") {
+		if strings.HasPrefix(line, TAG_MEDIALENGTH+":") {
 			var duration float64
-			_, _ = fmt.Sscanf(line, "#EXTINF:%f,", &duration)
+			_, _ = fmt.Sscanf(line, "%s:%f,", TAG_MEDIALENGTH, &duration)
 			if duration > maxDuration {
 				maxDuration = duration
 			}
@@ -396,7 +399,7 @@ func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]s
 	segLength := 0.0
 	for _, line := range segmentLines {
 		// #EXTINF
-		if strings.HasPrefix(line, "#EXTINF:") {
+		if strings.HasPrefix(line, TAG_MEDIALENGTH+":") {
 			filteredLines = append(filteredLines, line)
 			parts := strings.Split(line, ":")
 			number, err := strconv.ParseFloat(parts[1][:len(parts[1])-1], 64)
@@ -416,7 +419,7 @@ func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]s
 			tmpCount++
 		}
 	}
-	segmentData.Length = int(math.Ceil(segLength))
+	segmentData.Length = int(math.Ceil(segLength * LENGTH_ADJUST))
 
 	// .m3u8 파일의 디렉토리 추출
 	sourceDir := filepath.Dir(tempPlaylistPath)
@@ -456,4 +459,73 @@ func copySegments(tempPlaylistPath, tempSegmentName string, destDir string) ([]s
 	segmentData.End = segCount - 1
 
 	return filteredLines, segmentData, nil
+}
+
+func LoadHls() error {
+	// Read the main playlist content
+	mainPlaylist, err := os.ReadFile(mainPlaylistFile)
+	if err != nil {
+		log.Println("MainPlayList가 존재하지 않습니다. 파일이 없다고 가정하고 서버를 부팅합니다.")
+		return nil
+	}
+	log.Println("MainPlayList가 존재합니다. 기존 파일들을 Merry-Go에 입력합니다.")
+	rawMainLines := strings.Split(string(mainPlaylist), "\n")
+
+	// 정규 표현식 컴파일
+	re := regexp.MustCompile(SEGNAME + `(\d+)\.ts`)
+
+	startIndex := 0
+	endIndex := 0
+	segLength := 0.0
+
+	// 파일 목록 순회
+	for _, line := range rawMainLines {
+		// #EXTINF
+		if strings.HasPrefix(line, TAG_MEDIALENGTH+":") {
+			parts := strings.Split(line, ":")
+			number, err := strconv.ParseFloat(parts[1][:len(parts[1])-1], 64)
+			if err != nil {
+				fmt.Println("Error:", err)
+				return err
+			}
+			segLength += number
+		} else {
+			// 파일 이름에서 숫자 추출
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				number, err := strconv.Atoi(matches[1])
+				if err != nil {
+					return err
+				}
+				if startIndex == 0 {
+					startIndex = number
+					endIndex = number
+				} else {
+					endIndex = number
+				}
+			} else if line == "#EXT-X-DISCONTINUITY" {
+				err = merryGo.Append(&data_struct.Segment{Start: startIndex, End: endIndex, Length: int(math.Ceil(segLength * LENGTH_ADJUST))})
+				log.Printf("Merry-Go %d 번째 데이터 : %d, %d, %f", merryGo.Count, startIndex, endIndex, segLength)
+				startIndex = 0
+				endIndex = 0
+				segLength = 0.0
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if startIndex != 0 && endIndex != 0 && segLength != 0.0 {
+		err = merryGo.Append(&data_struct.Segment{Start: startIndex, End: endIndex, Length: int(math.Ceil(segLength * LENGTH_ADJUST))})
+		log.Printf("Merry-Go %d 번째 데이터 : %d, %d, %f", merryGo.Count, startIndex, endIndex, segLength)
+		startIndex = 0
+		endIndex = 0
+		segLength = 0.0
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
