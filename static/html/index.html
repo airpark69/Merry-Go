@@ -239,8 +239,6 @@
                 }
             }
 
-            
-
             document.getElementById('sendBtn').addEventListener('click', sendMessage);
 
             document.getElementById('messageInput').addEventListener('keydown', function(event) {
@@ -251,6 +249,7 @@
 
             document.getElementById('uploadButton').addEventListener('change', async function (event) {
                 var file = event.target.files[0];
+                var resultElement = document.getElementById('uploadResult');
                 if (file) {
                     var formData = new FormData();
                     formData.append('video', file);
@@ -259,12 +258,24 @@
                         method: 'POST',
                         body: formData
                     })
-                        .then(response => response.json())
-                        .then(data => {
-                            console.log('Success:', data);
+                        .then(response => {
+                            // Clear the file input value
+                            event.target.value = '';
+
+                            if (response.ok) {
+                                return response.text().then(data => {
+                                    resultElement.style.color = 'green'; // Success color
+                                    resultElement.textContent = 'Upload successful: ' + data;
+                                });
+                            } else {
+                                return response.text().then(errorMessage => {
+                                    throw new Error(errorMessage);
+                                });
+                            }
                         })
                         .catch((error) => {
-                            console.error('Error:', error);
+                            resultElement.style.color = 'red'; // Error color
+                            resultElement.textContent = 'Upload failed: ' + error.message;
                         });
                 }
             });
@@ -312,6 +323,7 @@
         <div id="videoContainer">
             <video id="video" controls autoplay></video>
             <input type="file" id="uploadButton" class="shared-style" accept="video/*">
+            <span id="uploadResult"></span>
             <div id="pixelBoardContainer">
                 <div id="pixelBoard" class="shared-style"></div>
                 <div id="colorPalette"></div>
