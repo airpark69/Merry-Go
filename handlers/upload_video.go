@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"Merry-Go/data_struct"
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/gofiber/fiber/v2"
@@ -9,7 +10,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"mime/multipart"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +27,7 @@ const (
 	SEGNAME            = "seg"
 	SPLITER            = "_"
 	PLAYLIST           = "playlist"
+	MAX_VIDEO_LENGTH   = 10
 	LENGTH_ADJUST      = 1.4
 	TAG_TARGETDURATION = "#EXT-X-TARGETDURATION"
 	TAG_MEDIALENGTH    = "#EXTINF"
@@ -47,18 +48,22 @@ var merryGo = data_struct.NewMerryGo(10)
 /* UploadHandler handles file uploads and converts them to HLS format
  */
 func UploadHandler(c *fiber.Ctx) error {
+	if merryGo.IsFull() {
+		return c.Status(fiber.StatusBadRequest).SendString("Merry-Go is Full")
+	}
+
 	file, err := c.FormFile("video")
 	if err != nil {
 		log.Println("Failed to retrieve file from form-data: ", err)
 		return c.Status(fiber.StatusBadRequest).SendString("Failed to retrieve file from form-data")
 	}
 
-	if merryGo.IsFull() {
-		return c.Status(fiber.StatusBadRequest).SendString("Merry-Go is Full")
-	}
-
 	// Save the uploaded file to the server
 	tempFilePath := filepath.Join(os.TempDir(), file.Filename)
+
+	if err := c.SaveFile(file, tempFilePath); err != nil {
+		return c.Status(fiber.StatusInternalServerError).SendString("Failed to save file")
+	}
 	defer func(filePath string) {
 		err := deleteTempUploadedFile(filePath)
 		if err != nil {
@@ -66,34 +71,46 @@ func UploadHandler(c *fiber.Ctx) error {
 		}
 	}(tempFilePath)
 
-	tempFile, err := os.Create(tempFilePath)
+	// 동영상 길이 확인
+	duration, err := getVideoDuration(tempFilePath)
 	if err != nil {
-		log.Println("Failed to create temporary file: ", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to create temporary file")
+		log.Println("Failed to get video duration: ", err)
+		return c.Status(fiber.StatusInternalServerError).SendString("Failed to get video duration")
 	}
-	defer func(tempFile *os.File) {
-		err := tempFile.Close()
-		if err != nil {
-			log.Println("Failed to close temporary file: ", err)
-		}
-	}(tempFile)
 
-	uploadedFile, err := file.Open()
-	if err != nil {
-		log.Println("Failed to open uploaded file: ", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to open uploaded file")
+	// 동영상 길이가 MAX_VIDEO_LENGTH를 초과하면 업로드 거부
+	if duration > MAX_VIDEO_LENGTH {
+		return c.Status(fiber.StatusBadRequest).SendString(fmt.Sprintf("Video duration exceeds %d seconds", MAX_VIDEO_LENGTH))
 	}
-	defer func(uploadedFile multipart.File) {
-		err := uploadedFile.Close()
-		if err != nil {
-			log.Println("Failed to close uploaded file: ", err)
-		}
-	}(uploadedFile)
 
-	if _, err := io.Copy(tempFile, uploadedFile); err != nil {
-		log.Println("Failed to save file: ", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to save file")
-	}
+	//tempFile, err := os.Create(tempFilePath)
+	//if err != nil {
+	//	log.Println("Failed to create temporary file: ", err)
+	//	return c.Status(fiber.StatusInternalServerError).SendString("Failed to create temporary file")
+	//}
+	//defer func(tempFile *os.File) {
+	//	err := tempFile.Close()
+	//	if err != nil {
+	//		log.Println("Failed to close temporary file: ", err)
+	//	}
+	//}(tempFile)
+	//
+	//uploadedFile, err := file.Open()
+	//if err != nil {
+	//	log.Println("Failed to open uploaded file: ", err)
+	//	return c.Status(fiber.StatusInternalServerError).SendString("Failed to open uploaded file")
+	//}
+	//defer func(uploadedFile multipart.File) {
+	//	err := uploadedFile.Close()
+	//	if err != nil {
+	//		log.Println("Failed to close uploaded file: ", err)
+	//	}
+	//}(uploadedFile)
+	//
+	//if _, err := io.Copy(tempFile, uploadedFile); err != nil {
+	//	log.Println("Failed to save file: ", err)
+	//	return c.Status(fiber.StatusInternalServerError).SendString("Failed to save file")
+	//}
 
 	muxUploadVideo.Lock()
 	defer muxUploadVideo.Unlock()
@@ -355,7 +372,7 @@ func findMaxDuration(combinedLines []string) float64 {
 	for _, line := range combinedLines {
 		if strings.HasPrefix(line, TAG_MEDIALENGTH+":") {
 			var duration float64
-			_, _ = fmt.Sscanf(line, "%s:%f,", TAG_MEDIALENGTH, &duration)
+			_, _ = fmt.Sscanf(line, TAG_MEDIALENGTH+":%f,", &duration)
 			if duration > maxDuration {
 				maxDuration = duration
 			}
@@ -557,4 +574,29 @@ func LoadHls() error {
 	}
 
 	return nil
+}
+
+/*
+	getVideoDuration 함수는 FFmpeg를 사용하여 동영상의 길이를 가져옵니다.
+
+return: 비디오 길이 float64, error
+*/
+func getVideoDuration(filePath string) (float64, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries",
+		"format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("error executing ffmpeg command: %v, stderr: %s", err, stderr.String())
+	}
+
+	durationStr := strings.TrimSpace(string(out))
+	duration, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("error parsing duration: %v", err)
+	}
+	return duration, nil
 }
