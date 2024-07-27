@@ -31,7 +31,6 @@ func RotateInteval() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Println("Rotated!")
 			newLength, err = RotateVideo(changeIntervalChan)
 			if err != nil {
 				log.Println(err)
@@ -94,6 +93,7 @@ func RotateVideo(changeIntervalChan chan<- ChangeInterval) (int, error) {
 	headStart, headEnd, headLength = merryGo.Head.Rider.Info()
 
 	// Update Sequence (첫번째로 읽어올 Segment 파일 번호)
+	updateDurationTag(mainLines)
 	updateSequenceTag(mainLines, headStart)
 	// Write the combined lines back to the main playlist
 	err = os.WriteFile(mainPlaylistFile, []byte(strings.Join(mainLines, "\n")), 0644)
@@ -180,7 +180,6 @@ func rotateSegment(lastSegNum int, start int, end int) (int, int, error) {
 	for i := start; i <= end; i++ {
 		beforeSegs = append(beforeSegs, fmt.Sprintf(SEGNAME+"%d.ts", i))
 	}
-	log.Println(beforeSegs)
 	headStart := lastSegNum
 	// 세그먼트 파일 복사 -> 복사 없이 가능
 	for _, file := range files {
