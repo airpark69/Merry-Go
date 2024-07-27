@@ -86,12 +86,8 @@ func RotateVideo(changeIntervalChan chan<- ChangeInterval) (int, error) {
 		log.Println(err)
 		return headLength, err
 	}
-	log.Println("headStart : ", headStart)
-	log.Println("headEnd : ", headEnd)
 	merryGo.Head.Rider.Update(headStart, headEnd)
 	headStart, headEnd, headLength = merryGo.Head.Rider.Info()
-	log.Println("r.headstart : ", headStart)
-	log.Println("r.headEnd : ", headEnd)
 
 	_ = merryGo.Rotate()
 
